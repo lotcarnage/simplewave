@@ -41,6 +41,10 @@ class TestSimpleWave(unittest.TestCase):
         dst = f'{TEST_ROOT}/testdata/test_monoral_48000_16bit.out.wav'
         self.assertTrue(simplewave.save(dst, *simplewave.load(src)[:3]))
         self.assertTrue(_compare(src, dst))
+        src = f'{TEST_ROOT}/testdata/test_monoral_16000_24bit.wav'
+        dst = f'{TEST_ROOT}/testdata/test_monoral_16000_24bit.out.wav'
+        self.assertTrue(simplewave.save(dst, *simplewave.load(src)[:3]))
+        self.assertTrue(_compare(src, dst))
 
     def test_load_and_save_stereo(self):
         TEST_ROOT = os.path.dirname(__file__)

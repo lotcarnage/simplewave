@@ -8,18 +8,21 @@ from enum import Enum
 class _ValueType(Enum):
     SINT8 = 0
     SINT16 = 1
-    SINT32 = 2
-    UINT8 = 3
-    UINT16 = 4
-    UINT32 = 5
-    FLOAT32 = 6
+    SINT24 = 2
+    SINT32 = 3
+    UINT8 = 4
+    UINT16 = 5
+    UINT24 = 6
+    UINT32 = 7
+    FLOAT32 = 8
 
 
 class PcmFormat(Enum):
     SINT8 = 0
     SINT16 = 1
-    SINT32 = 2
-    FLOAT32 = 3
+    SINT24 = 2
+    SINT32 = 3
+    FLOAT32 = 4
 
 
 def _split_chunk(bin: bytes, chunk_name: bytes):
@@ -30,8 +33,8 @@ def _split_chunk(bin: bytes, chunk_name: bytes):
 
 
 def _convert_pack_format(type_array: list[_ValueType]):
-    format_table = ['b', 'h', 'i', 'B', 'H', 'I', 'f']
-    size_table = [1, 2, 4, 1, 2, 4, 4]
+    format_table = ['b', 'h', '', 'i', 'B', 'H', '', 'I', 'f']
+    size_table = [1, 2, 3, 4, 1, 2, 3, 4, 4]
     byte_length = sum([size_table[t.value] for t in type_array])
     pack_format = f"<{''.join([format_table[t.value] for t in type_array])}"
     return pack_format, byte_length
@@ -45,14 +48,78 @@ def _read_structure(bin: bytes, structure_defs: list[tuple[str, _ValueType]]):
     return structure, bin[byte_length:]
 
 
+def _read_array_sint8(bin: bytes, num_elements: int):
+    u8_array = [bin[i] for i in range(0, num_elements, 1)]
+    s8_array = [v if v < (2**7) else v - (2**8) for v in u8_array]
+    return s8_array
+
+
+def _read_array_sint16(bin: bytes, num_elements: int):
+    u16_array = [bin[i] + bin[i + 1] * (2**8) for i in range(0, num_elements * 2, 2)]
+    s16_array = [v if v < (2**15) else v - (2**16) for v in u16_array]
+    return s16_array
+
+
+def _read_array_sint24(bin: bytes, num_elements: int):
+    u24_array = [bin[i] + bin[i + 1] * (2**8) + bin[i + 2] * (2**16) for i in range(0, num_elements * 3, 3)]
+    s24_array = [v if v < (2**23) else v - (2**24) for v in u24_array]
+    return s24_array
+
+
+def _read_array_sint32(bin: bytes, num_elements: int):
+    u32_array = [bin[i] + bin[i + 1] * (2**8) + bin[i + 2] * (2**16) + bin[i + 3] * (2**24) for i in range(0, num_elements * 4, 4)]
+    s32_array = [v if v < (2**31) else v - (2**32) for v in u32_array]
+    return s32_array
+
+
+def _serialize_sint8_array(values: list[int]):
+    serialized = bytearray(len(values) * 1)
+    for i, v in zip(range(0, len(values) * 1, 1), values):
+        v_bytes = struct.pack('i', v)
+        serialized[i + 0] = v_bytes[0]
+    return serialized
+
+
+def _serialize_sint16_array(values: list[int]):
+    serialized = bytearray(len(values) * 2)
+    for i, v in zip(range(0, len(values) * 2, 2), values):
+        v_bytes = struct.pack('i', v)
+        serialized[i + 0] = v_bytes[0]
+        serialized[i + 1] = v_bytes[1]
+    return serialized
+
+
+def _serialize_sint24_array(values: list[int]):
+    serialized = bytearray(len(values) * 3)
+    for i, v in zip(range(0, len(values) * 3, 3), values):
+        v_bytes = struct.pack('i', v)
+        serialized[i + 0] = v_bytes[0]
+        serialized[i + 1] = v_bytes[1]
+        serialized[i + 2] = v_bytes[2]
+    return serialized
+
+
+def _serialize_sint32_array(values: list[int]):
+    serialized = bytearray(len(values) * 4)
+    for i, v in zip(range(0, len(values) * 4, 4), values):
+        v_bytes = struct.pack('i', v)
+        serialized[i + 0] = v_bytes[0]
+        serialized[i + 1] = v_bytes[1]
+        serialized[i + 2] = v_bytes[2]
+        serialized[i + 3] = v_bytes[3]
+    return serialized
+
+
 def _read_array(bin: bytes, value_type: _ValueType, num_elements: int):
-    format_table = ['b', 'h', 'i', 'B', 'H', 'I', 'f']
-    size_table = [1, 2, 4, 1, 2, 4, 4]
-    element_format = format_table[value_type.value]
-    byte_length = size_table[value_type.value] * num_elements
-    pack_format = f'<{num_elements}{element_format}'
-    value_array = struct.unpack_from(pack_format, bin[:byte_length])
-    return value_array, bin[byte_length:]
+    if value_type == _ValueType.SINT8:
+        return _read_array_sint8(bin, num_elements)
+    elif value_type == _ValueType.SINT16:
+        return _read_array_sint16(bin, num_elements)
+    elif value_type == _ValueType.SINT24:
+        return _read_array_sint24(bin, num_elements)
+    elif value_type == _ValueType.SINT32:
+        return _read_array_sint32(bin, num_elements)
+    return None
 
 
 def _read_wave(bin: bytes) -> tuple[list[list[int or float]], int, PcmFormat, int] or None:
@@ -64,7 +131,7 @@ def _read_wave(bin: bytes) -> tuple[list[list[int or float]], int, PcmFormat, in
         ('frame_size', _ValueType.UINT16),
         ('sample_depth', _ValueType.UINT16)
     ]
-    int_pcm_type_table = [None, PcmFormat.SINT8, PcmFormat.SINT16, None, PcmFormat.SINT32]
+    int_pcm_type_table = [None, PcmFormat.SINT8, PcmFormat.SINT16, PcmFormat.SINT24, PcmFormat.SINT32]
     riff_chunk, _ = _split_chunk(bin, b'RIFF')
     if riff_chunk is None:
         return None
@@ -88,15 +155,18 @@ def _read_wave(bin: bytes) -> tuple[list[list[int or float]], int, PcmFormat, in
             value_type = _ValueType.SINT8
         elif fmt_sample_byte == 2:
             value_type = _ValueType.SINT16
+        elif fmt_sample_byte == 3:
+            value_type = _ValueType.SINT24
         elif fmt_sample_byte == 4:
             value_type = _ValueType.SINT32
         else:
-            print('fmt2')
             return None
 
     data_chunk, _ = _split_chunk(maybe_data, b'data')
     num_elements = len(data_chunk) // fmt_sample_byte
-    interleaved_pcms, _ = _read_array(data_chunk, value_type, num_elements)
+    interleaved_pcms = _read_array(data_chunk, value_type, num_elements)
+    if interleaved_pcms is None:
+        return None
     pcms = []
     for ch in range(fmt['num_channels']):
         pcms.append(interleaved_pcms[ch::fmt['num_channels']])
@@ -112,7 +182,7 @@ def _interleave_pcms(pcms: list[list[int or float]]) -> list[int or float]:
 
 
 def _serialize_wave(pcms: list[list[int or float]], sampling_rate: int, pcm_type: PcmFormat) -> bytes or None:
-    sample_byte_length_table = [1, 2, 4, 4]
+    sample_byte_length_table = [1, 2, 3, 4, 4]
     nch = len(pcms)
     num_samples = len(pcms[0])
     sample_byte_length = sample_byte_length_table[pcm_type.value]
@@ -134,9 +204,17 @@ def _serialize_wave(pcms: list[list[int or float]], sampling_rate: int, pcm_type
     fmt_sample_bit_depth = sample_byte_length * 8
     fmt__body = struct.pack('hhiihh', fmt_encoding, fmt_num_channels, fmt_sampling_rate, fmt_byte_par_sec, fmt_frame_size, fmt_sample_bit_depth)
 
-    sample_pack_format = ['b', 'h', 'i', 'f'][pcm_type.value]
     interleaved_pcms = _interleave_pcms(pcms)
-    data_body = struct.pack(f'<{nch*num_samples}{sample_pack_format}', *interleaved_pcms)
+    if pcm_type.value == PcmFormat.SINT8.value:
+        data_body = _serialize_sint8_array(interleaved_pcms)
+    elif pcm_type.value == PcmFormat.SINT16.value:
+        data_body = _serialize_sint16_array(interleaved_pcms)
+    elif pcm_type.value == PcmFormat.SINT24.value:
+        data_body = _serialize_sint24_array(interleaved_pcms)
+    elif pcm_type.value == PcmFormat.SINT32.value:
+        data_body = _serialize_sint32_array(interleaved_pcms)
+    else:
+        print(pcm_type.value, PcmFormat.SINT16)
 
     wave_file_bytes = riff_header + b'WAVE' + fmt__header + fmt__body + data_header + data_body
     if len(wave_file_bytes) != riff_chunk_length:
